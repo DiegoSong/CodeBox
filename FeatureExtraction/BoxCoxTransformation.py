@@ -5,13 +5,14 @@
 # @Software: PyCharm
 import numpy as np
 import pandas as pd
-from scipy import stats,special
+from scipy import stats, special
+
 
 class BoxCoxTransformation():
     """
      the seminal paper by Box and Cox(1964)
     """
-    def __init__(self,methods,steps=300,isPlot=False):
+    def __init__(self, methods, steps=300, isPlot=False):
         self.fillna_method = methods
         self.useful_col = list()
         self.todo_col = list()
@@ -19,9 +20,8 @@ class BoxCoxTransformation():
         self.steps = steps
         self.isPlot = isPlot
 
-
     @staticmethod
-    def nan_replace(x,method):
+    def nan_replace(x, method):
         """
 
         :param x:
@@ -37,8 +37,7 @@ class BoxCoxTransformation():
             replace_element = np.nanmean(x)
         return x.fillna(replace_element)
 
-
-    def fit(self,X):
+    def fit(self, X):
         tmp = X.copy()
         res = pd.DataFrame(tmp.min()).reset_index()
         self.useful_col = list(res[res[0]>=0]['index'])
@@ -88,8 +87,7 @@ class BoxCoxTransformation():
 
         return self
 
-
-    def transform(self,X):
+    def transform(self, X):
         X_tmp = X.copy()
         result = pd.DataFrame()
         for i, lam_best in zip(self.fit_result.keys(), self.fit_result.values()):
@@ -97,9 +95,8 @@ class BoxCoxTransformation():
             result[i] = result[i].apply(lambda x:1e-10 if x == 0 else x)
             result[i] = special.boxcox1p(result[i], lam_best)
 
-        return self.nan_replace(pd.concat([result,pd.DataFrame(X_tmp[self.todo_col])],axis=1),method=self.fillna_method)
+        return pd.concat([result,pd.DataFrame(X_tmp[self.todo_col])],axis=1)
 
-
-    def fit_transform(self,X):
+    def fit_transform(self, X):
         self.fit(X)
         return self.transform(X)
