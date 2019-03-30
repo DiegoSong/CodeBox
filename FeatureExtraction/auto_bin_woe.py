@@ -1,7 +1,8 @@
 from scipy import stats
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+# from tqdm import tqdm
+from sklearn.externals import joblib
 from sklearn.utils.multiclass import type_of_target
 from copy import deepcopy
 
@@ -44,7 +45,7 @@ class WOE:
         self.check_target_binary(y)
 
         event_total, non_event_total = self.count_binary(y, event=event)
-        x_labels = np.unique(x)
+        x_labels = pd.unique(x)
         woe_dict = {}
         iv = 0
         for x1 in x_labels:
@@ -285,7 +286,7 @@ class AutoBinWOE(object):
 
     def fit(self, X, y):
         X_bin = self._discrete_fit_transform(X)
-        for variable in tqdm(X_bin.columns):
+        for variable in X_bin.columns:
             if variable in self.threshold.keys():
                 thr = self.threshold[variable]
                 coef, data_matrix = self.monotony_single_fit(X_bin[variable], y, thr)
@@ -377,6 +378,12 @@ class AutoBinWOE(object):
             return matrix.loc[elem, "woe"]
         else:
             return 0.0
+        
+    def save_model(self, file_path):
+        joblib.dump(self, file_path)
+
+    def load_model(self, file_path):
+        return joblib.load(self, file_path)
 
 
 def nan_replace(x, method=None):
@@ -397,7 +404,7 @@ def nan_replace(x, method=None):
 
 
 if __name__ == '__main__':
-    from src.feature_utils import *
+    # from src.feature_utils import *
     df = pd.read_csv("data/op32.csv")
     df['op_lasts'] = df['op_lasts'] * -1
     df = df.fillna(-9999)
