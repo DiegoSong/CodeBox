@@ -1,38 +1,37 @@
-import gc
 import shap
 from functools import reduce
-import pandas as pd # package for high-performance, easy-to-use data structures and data analysis
-import numpy as np # fundamental package for scientific computing with Python
-import matplotlib
-import matplotlib.pyplot as plt # for plotting
-pd.set_option('max_columns', 100)
+import pandas as pd  # package for high-performance, easy-to-use data structures and data analysis
+import numpy as np  # fundamental package for scientific computing with Python
+from xgboost import XGBClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.base import TransformerMixin, BaseEstimator
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score, make_scorer
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import learning_curve
+from lightgbm import LGBMClassifier
+from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+from sklearn.feature_selection import SelectKBest, chi2, mutual_info_classif, f_classif, RFE
+from src.auto_bin_woe import AutoBinWOE
+from sklearn.externals import joblib
+from sklearn.decomposition import PCA
+from sklearn.feature_extraction.text import CountVectorizer
+import matplotlib.pyplot as plt  # for plotting
+from sklearn.base import clone
 import hashlib
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+
 from tqdm import tqdm
 import time
 import warnings
 warnings.filterwarnings('ignore')
-
-from xgboost import XGBClassifier
-import xgboost as xgb
-from sklearn.base import TransformerMixin, BaseEstimator
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, precision_recall_curve, make_scorer
-from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
-from sklearn.feature_selection import SelectFromModel
-from sklearn.model_selection import learning_curve
-from sklearn.pipeline import make_pipeline
-from lightgbm import LGBMClassifier
-from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
-from sklearn.externals import joblib
-from sklearn.decomposition import PCA
-from sklearn.feature_extraction.text import CountVectorizer
-
+pd.set_option('max_columns', 100)
 sss = StratifiedKFold(n_splits=5, shuffle=True, random_state=45)
+
 
 def merge_dataframes(dfs, merge_keys, how='inner'):
     dfs_merged = reduce(lambda left, right: pd.merge(left, right, on=merge_keys, how=how), dfs)
     return dfs_merged
+
 
 def genearteMD5(str):
     # 创建md5对象
@@ -43,6 +42,7 @@ def genearteMD5(str):
     # 否则报错为：hl.update(str)    Unicode-objects must be encoded before hashing
     hl.update(str.encode(encoding='utf-8'))
     return hl.hexdigest()
+
 
 def get_importance(opt, X):
     try:
@@ -168,7 +168,7 @@ def cal_ks(y_true, y_pred, ks_thre_vali=None, return_thre=False, is_plot=False):
 
 def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
                         n_jobs=1, train_sizes=np.linspace(.1, 1.0, 5)):
-    auc_scorer = make_scorer(roc_auc_score)
+    # auc_scorer = make_scorer(roc_auc_score)
     plt.figure()
     plt.title(title)
     if ylim is not None:
@@ -176,7 +176,7 @@ def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
     plt.xlabel("Training examples")
     plt.ylabel("Score")
     train_sizes, train_scores, test_scores = learning_curve(
-        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes, scoring=auc_scorer)
+        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes)
     train_scores_mean = np.mean(train_scores, axis=1)
     train_scores_std = np.std(train_scores, axis=1)
     test_scores_mean = np.mean(test_scores, axis=1)
@@ -335,7 +335,6 @@ class LikelihoodEncoder(BaseEstimator, TransformerMixin):
         self.c = c
 
     def fit(self, X, y):
-
         for i in range(X.shape[1]):
             feature = X.iloc[:, i]
             fname = feature.name
@@ -399,9 +398,11 @@ class PCAEncoder(BaseEstimator, TransformerMixin):
 
 class LDAEncoder(BaseEstimator, TransformerMixin):
     def __init__(self, n_components, split=' ', random_state=0, fname=None):
+        from sklearn.decomposition import LatentDirichletAllocation
         self.vectorizer = CountVectorizer(tokenizer=lambda x: x.split(split), min_df=0.0002)
         self.lda = LatentDirichletAllocation(n_components=n_components, random_state=random_state)
         self.fn = str(fname)
+
     def fit(self, X, y=None):
         self.vectorizer.fit(X)
         vector_features = self.vectorizer.transform(X)
@@ -421,6 +422,7 @@ class LDAEncoder(BaseEstimator, TransformerMixin):
 # 特征生成
 # 1. PolynomialFeatures
 def add_polynomial_features(X, X_test, y=None):
+    from sklearn.preprocessing import PolynomialFeatures
     ploy = PolynomialFeatures(2, interaction_only=True)
     ploy.fit(X)
     new_features = ploy.transform(X)
@@ -494,6 +496,7 @@ def save_feature_model(clf, stacking_train, stacking_oot, X, X_oot, fname):
     
 
 def hyperopt_cv(X_train, y_train, classifier, n_iter=50):
+    from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
     # ----- step1: define a objective to minimize -----#
     # 必须是最小化
     def objective(params):
@@ -621,7 +624,6 @@ def hyperopt_cv(X_train, y_train, classifier, n_iter=50):
 
     return best_params, best_clf
 
-
 def one_hot(X_train, X_oot, cat_features):
     onehot = OneHotEncoder(handle_unknown='ignore')
     onehot_dict = dict()
@@ -653,14 +655,83 @@ def count_vector(X_train, X_oot, features):
         vector_dict[f] = _vector
     # train    
     for f in features:
-        _tmp = vector_dict[f].transform(X_train[[f]]).toarray()
-        _tmp_df = pd.DataFrame(_tmp, columns=[f+ '_' + str(i) for i in _vector[f].get_feature_names()])
+        _tmp = vector_dict[f].transform(X_train[f]).toarray()
+        _tmp_df = pd.DataFrame(_tmp, columns=[f+ '_' + str(i) for i in vector_dict[f].get_feature_names()])
         del X_train[f]
         X_train = pd.concat([X_train, _tmp_df], axis=1)
     # test    
     for f in features:
-        _tmp = vector_dict[f].transform(X_oot[[f]]).toarray()
-        _tmp_df = pd.DataFrame(_tmp, columns=[f+ '_' + str(i) for i in _vector[f].get_feature_names()])
+        _tmp = vector_dict[f].transform(X_oot[f]).toarray()
+        _tmp_df = pd.DataFrame(_tmp, columns=[f+ '_' + str(i) for i in vector_dict[f].get_feature_names()])
         del X_oot[f]
         X_oot = pd.concat([X_oot, _tmp_df], axis=1)
     return X_train, X_oot
+
+def min_max(X_train, X_oot):
+    fn = X_train.columns
+    scaler = MinMaxScaler()
+    scaler.fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_oot = scaler.transform(X_oot)
+    X_train = pd.DataFrame(X_train, columns=fn)
+    X_oot = pd.DataFrame(X_oot, columns=fn)
+    return X_train, X_oot, scaler
+
+
+# 特征选择
+def feature_select(X_train, y_train, method='iv', kb=100, rfe=30):
+    if method == 'iv':
+        method = mutual_info_classif
+    elif method == 'f':
+        method = f_classif
+    
+    # chi2
+    fn = X_train.columns
+    selector1 = SelectKBest(chi2, kb)
+    selector1.fit(X_train, y_train)
+    
+    # information value
+    selector2 = SelectKBest(method, kb)
+    selector2.fit(X_train, y_train)
+    left_features = list(set(fn[selector2.get_support()].tolist() + fn[selector1.get_support()].tolist()))
+
+    # RFE
+    _X_tmp = X_train[left_features]
+    fn = _X_tmp.columns
+    clf = LogisticRegression(penalty='l2', C=0.2)
+    selector = RFE(estimator=clf, n_features_to_select=rfe)
+    selector.fit(_X_tmp, y_train)
+    
+    left_features = fn[selector.get_support()].tolist()
+    X_train = X_train[left_features]
+    return left_features
+
+
+# 检验oot和train与y的关系是否一致单调
+def oot_monotonicity_check(X_train, y_train, X_oot, y_oot):
+    from src.auto_bin_woe import AutoBinWOE
+    woe = AutoBinWOE(bins=5)
+    woe.fit(X_train, y_train)
+    X_woe = woe.transform(X_train)
+    X_oot_woe = woe.transform(X_oot)
+    dict_dock = woe.compute_bad_rate(X_train, y_train)
+    dict_dock_oot = woe.compute_bad_rate(X_oot, y_oot)
+    
+    cols = []
+    for k in dict_dock:
+        corr = np.corrcoef(dict_dock[k]['bad_rate'], dict_dock_oot[k]['bad_rate'])[0][1]
+        dict_dock[k]['bad_rate_oot'] = dict_dock_oot[k]['bad_rate']
+        mean1 = dict_dock[k]['bad_rate'].mean()
+        mean2 = dict_dock[k]['bad_rate_oot'].mean()
+        if corr > 0:
+        # if (mean2 - dict_dock[k]['br'].values[0]) * (mean1 - dict_dock[k]['bad_rate'].values[0])>0:
+            cols.append(k)
+            print(k)
+            print(dict_dock[k])
+     
+    br_df = pd.DataFrame()
+    for f in dict_dock:
+        tmp = dict_dock[f]
+        tmp.insert(0, 'feature', f)
+        br_df = pd.concat([br_df, tmp])
+    return cols, br_df
